@@ -57,6 +57,7 @@ public class JwtAuth extends OncePerRequestFilter {
         // 后端"的标准答案就是这一行。
         if ("OPTIONS".equals(req.getMethod())
                 || path.equals("/api/login")
+                || path.equals("/actuator/health")
                 || path.startsWith("/h2-console")) {
             chain.doFilter(req, resp);
             return;

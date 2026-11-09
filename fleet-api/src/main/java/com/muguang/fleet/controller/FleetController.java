@@ -6,6 +6,7 @@ import com.muguang.fleet.repo.ServiceRepository;
 import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -31,19 +32,32 @@ public class FleetController {
 
     private final ServiceRepository repo;
     private final JwtAuth jwt;
+    private final String adminUser;
+    private final String adminPassword;
 
-    public FleetController(ServiceRepository repo, JwtAuth jwt) {
+    public FleetController(ServiceRepository repo, JwtAuth jwt,
+                           @Value("${fleet.admin-user}") String adminUser,
+                           @Value("${fleet.admin-password}") String adminPassword) {
         // 构造器注入：依赖由 Spring 容器提供（IoC，控制反转）
         this.repo = repo;
         this.jwt = jwt;
+        this.adminUser = adminUser;
+        this.adminPassword = adminPassword;
     }
 
-    /** POST /api/login  ->  {token}   演示用固定账号 */
+    /** POST /api/login  ->  {token}   账号由配置注入，不写死在源码里 */
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody Map<String, String> body) {
         String user = body.getOrDefault("username", "");
         String pass = body.getOrDefault("password", "");
-        if (!"admin".equals(user) || !"admin123".equals(pass)) {
+        // 固定时长比较，避免按字符逐个短路造成的时序侧信道
+        boolean userOk = java.security.MessageDigest.isEqual(
+                user.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                adminUser.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        boolean passOk = java.security.MessageDigest.isEqual(
+                pass.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                adminPassword.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        if (!userOk || !passOk) {
             return ResponseEntity.status(401).body(Map.of("error", "用户名或密码错误"));
         }
         return ResponseEntity.ok(Map.of("token", jwt.issue(user)));
@@ -61,6 +75,7 @@ public class FleetController {
      * fleetkeeper(桌面/Go) -> Spring(云) -> Vue/UniApp(看板)。
      */
     @PostMapping("/report")
+    @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<?> report(@RequestBody Map<String, Object> body) {
         String reporter = String.valueOf(body.getOrDefault("reporter", "unknown"));
         Object servicesObj = body.get("services");
