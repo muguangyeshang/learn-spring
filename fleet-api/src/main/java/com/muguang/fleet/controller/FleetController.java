@@ -4,6 +4,7 @@ import com.muguang.fleet.config.JwtAuth;
 import com.muguang.fleet.model.ServiceEntity;
 import com.muguang.fleet.repo.ServiceRepository;
 import jakarta.validation.Valid;
+import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -52,6 +53,49 @@ public class FleetController {
     public Iterable<ServiceEntity> list() {
         return repo.findAllByOrderByIdAsc();
     }
+
+    /**
+     * POST /api/report  ->  fleetkeeper 各端把本机服务一览上报到云。
+     * 全量覆盖式：同端机器（reporter 标识）的服务表整体替换，
+     * 幂等——同一份上报连发两次结果一致。这是全家桶的第一条链路：
+     * fleetkeeper(桌面/Go) -> Spring(云) -> Vue/UniApp(看板)。
+     */
+    @PostMapping("/report")
+    public ResponseEntity<?> report(@RequestBody Map<String, Object> body) {
+        String reporter = String.valueOf(body.getOrDefault("reporter", "unknown"));
+        Object servicesObj = body.get("services");
+        if (!(servicesObj instanceof List<?> services)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "services 必须是数组"));
+        }
+        // 清掉该 reporter 旧数据（按 note 标记来源，字段里塞机器标识）
+        repo.findAll().forEach(svc -> {
+            if (reporter.equals(svc.getNote())) repo.delete(svc);
+        });
+        int accepted = 0;
+        for (Object o : services) {
+            if (!(o instanceof Map<?, ?> m)) continue;
+            ServiceEntity svc = new ServiceEntity();
+            svc.setName(truncate(str(m.get("name")), 64));
+            Object port = m.get("port");
+            Integer p = null;
+            try { p = Integer.parseInt(String.valueOf(port)); } catch (Exception ignore) { }
+            if (p == null || p < 1 || p > 65535) continue; // 坏行跳过不整单拒绝
+            svc.setPort(p);
+            Object lvl = m.get("level");
+            try { svc.setLevel(Math.max(0, Math.min(4, Integer.parseInt(String.valueOf(lvl))))); }
+            catch (Exception e) { svc.setLevel(0); }
+            svc.setHeartbeat(truncate(str(m.get("heartbeat")), 32));
+            svc.setNote(reporter);
+            // 端口被其他机器占则更新而非新建（同端口全局唯一）
+            repo.findByPort(p).ifPresent(old -> svc.setId(old.getId()));
+            repo.save(svc);
+            accepted++;
+        }
+        return ResponseEntity.ok(Map.of("reporter", reporter, "accepted", accepted));
+    }
+
+    private static String str(Object o) { return o == null ? "" : String.valueOf(o); }
+    private static String truncate(String s, int n) { return s.length() > n ? s.substring(0, n) : s; }
 
     @GetMapping("/services/{id}")
     public ResponseEntity<ServiceEntity> one(@PathVariable Long id) {
