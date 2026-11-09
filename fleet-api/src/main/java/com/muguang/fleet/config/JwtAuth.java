@@ -51,8 +51,13 @@ public class JwtAuth extends OncePerRequestFilter {
                                     FilterChain chain) throws ServletException, IOException {
         String path = req.getRequestURI();
 
-        // 登录与健康检查放行，其余都要票
-        if (path.equals("/api/login") || path.equals("/actuator/health") || path.startsWith("/h2-console")) {
+        // 登录与健康检查放行，其余都要票。
+        // CORS 预检（OPTIONS）也放行：预检不带 Authorization 头是浏览器
+        // 规范行为，把它拦了跨源前端就永远连不上——"前端突然连不上
+        // 后端"的标准答案就是这一行。
+        if ("OPTIONS".equals(req.getMethod())
+                || path.equals("/api/login")
+                || path.startsWith("/h2-console")) {
             chain.doFilter(req, resp);
             return;
         }
